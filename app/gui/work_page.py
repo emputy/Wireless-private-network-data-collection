@@ -4,7 +4,7 @@ import sqlite3
 
 from PySide6.QtCore import QDate
 from PySide6.QtWidgets import (
-    QCheckBox, QDateEdit, QHBoxLayout, QLabel, QMessageBox, QTextBrowser, QVBoxLayout, QWidget,
+    QCheckBox, QDateEdit, QFileDialog, QHBoxLayout, QLabel, QMessageBox, QTextBrowser, QVBoxLayout, QWidget,
 )
 
 from qfluentwidgets import CardWidget, PushButton, SubtitleLabel
@@ -306,63 +306,69 @@ class WorkPage(QWidget):
         self._bubble("分析结果", html)
 
     def export(self):
-        """导出 PDF / Word。"""
-        rows = self._load_rows()
+        """导出情报为 Word / PDF，弹窗选择格式与保存位置。"""
+        rows = self.get_visible_rows()
         if not rows:
-            QMessageBox.information(self, "导出", "数据库暂无数据")
+            QMessageBox.information(self, "导出", "当前没有可导出的数据")
             return
         from datetime import datetime
-        EXPORTS.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        word_path, pdf_path = None, None
-        word_err = pdf_err = ""
-
+        default_name = "无线专网情报汇总_" + datetime.now().strftime("%Y%m%d_%H%M%S")
+        path, selected = QFileDialog.getSaveFileName(
+            self, "选择导出格式与保存位置", default_name,
+            "Word 文档 (*.docx);;PDF 文档 (*.pdf)")
+        if not path:
+            return
+        path = path.strip()
+        # 根据选择器/扩展名补全
+        if not path.lower().endswith((".docx", ".pdf")):
+            if "PDF" in selected:
+                path += ".pdf"
+            else:
+                path += ".docx"
         try:
-            from docx import Document
-            doc = Document()
-            doc.add_heading("无线专网情报汇总", 0)
-            for row in rows:
-                src, title, url = row[2], row[3], row[4]
-                pub = row[5][:10] if row[5] else ""
-                doc.add_heading(title, level=2)
-                if pub:
-                    doc.add_paragraph(f"来源：{src}  发布：{pub}  链接：{url}")
-                else:
-                    doc.add_paragraph(f"来源：{src}  链接：{url}")
-            word_path = EXPORTS / f"intel_{stamp}.docx"
-            doc.save(str(word_path))
+            if path.lower().endswith(".pdf"):
+                self._export_pdf(rows, path)
+            else:
+                self._export_word(rows, path)
+            self._bubble("导出完成", f"已导出：{path}")
         except Exception as e:
-            word_err = str(e)
+            self._bubble("导出失败", html_mod.escape(str(e)))
 
-        try:
-            from reportlab.lib.pagesizes import A4
-            from reportlab.lib.styles import getSampleStyleSheet
-            from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
-            from xml.sax.saxutils import escape
-            pdf_path = EXPORTS / f"intel_{stamp}.pdf"
-            doc = SimpleDocTemplate(str(pdf_path), pagesize=A4)
-            styles = getSampleStyleSheet()
-            story = [Paragraph("无线专网情报汇总", styles["Title"])]
-            for row in rows[:100]:
-                src, title, url = row[2], row[3], row[4]
-                pub = row[5][:10] if row[5] else ""
-                story.append(Paragraph(escape(title), styles["Heading2"]))
-                if pub:
-                    story.append(Paragraph(f"来源：{escape(src)}  发布：{escape(pub)}  链接：{escape(url)}", styles["BodyText"]))
-                else:
-                    story.append(Paragraph(f"来源：{escape(src)}  链接：{escape(url)}", styles["BodyText"]))
-                story.append(Spacer(1, 8))
-            doc.build(story)
-        except Exception as e:
-            pdf_err = str(e)
+    def _export_word(self, rows, path):
+        from docx import Document
+        doc = Document()
+        doc.add_heading("无线专网情报汇总", 0)
+        for row in rows:
+            src, title, url = row[2], row[3], row[4]
+            pub = row[5][:10] if row[5] else ""
+            doc.add_heading(_strip_html(title) or "(无标题)", level=2)
+            if pub:
+                doc.add_paragraph(f"来源：{src}  发布：{pub}  链接：{url}")
+            else:
+                doc.add_paragraph(f"来源：{src}  链接：{url}")
+        doc.save(path)
 
-        msgs = []
-        if word_path:
-            msgs.append(f"Word：{word_path}")
-        else:
-            msgs.append("Word 导出失败：" + html_mod.escape(word_err))
-        if pdf_path:
-            msgs.append(f"PDF：{pdf_path}")
-        else:
-            msgs.append("PDF 导出失败：" + html_mod.escape(pdf_err))
-        self._bubble("导出完成", "<br/>".join(msgs))
+    def _export_pdf(self, rows, path):
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import mm
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+        from xml.sax.saxutils import escape
+        pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+        body = ParagraphStyle("body", fontName="STSong-Light", fontSize=10, leading=16)
+        h2 = ParagraphStyle("h2", fontName="STSong-Light", fontSize=12, leading=18, spaceBefore=6)
+        doc = SimpleDocTemplate(path, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm,
+                                topMargin=16 * mm, bottomMargin=16 * mm)
+        story = [Paragraph("无线专网情报汇总", ParagraphStyle("t", fontName="STSong-Light", fontSize=18, leading=24))]
+        for row in rows[:300]:
+            src, title, url = row[2], row[3], row[4]
+            pub = row[5][:10] if row[5] else ""
+            story.append(Paragraph(escape(_strip_html(title) or "(无标题)"), h2))
+            if pub:
+                story.append(Paragraph(f"来源：{escape(src)}  发布：{escape(pub)}  链接：{escape(url)}", body))
+            else:
+                story.append(Paragraph(f"来源：{escape(src)}  链接：{escape(url)}", body))
+            story.append(Spacer(1, 8))
+        doc.build(story)
