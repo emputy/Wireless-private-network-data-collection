@@ -49,18 +49,24 @@ class DeepSeekWorker(QThread):
         self.messages = messages
 
     def run(self):
+        import time
         import requests
         url = "https://api.deepseek.com/chat/completions"
         headers = {"Authorization": "Bearer " + self.api_key, "Content-Type": "application/json"}
         payload = {"model": self.model, "messages": self.messages, "stream": False}
-        try:
-            resp = requests.post(url, json=payload, headers=headers, timeout=90)
-            resp.raise_for_status()
-            data = resp.json()
-            content = data["choices"][0]["message"]["content"]
-            self.done.emit(content)
-        except Exception as e:
-            self.failed.emit(str(e))
+        last_err = ""
+        for attempt in range(3):  # 重试最多 3 次（响应过长/网络抖动时自动重试）
+            try:
+                resp = requests.post(url, json=payload, headers=headers, timeout=180)
+                resp.raise_for_status()
+                data = resp.json()
+                content = data["choices"][0]["message"]["content"]
+                self.done.emit(content)
+                return
+            except Exception as e:
+                last_err = str(e)
+                time.sleep(2 * (attempt + 1))
+        self.failed.emit("AI 请求重试 3 次仍失败：" + last_err)
 
 
 class TestKeyWorker(QThread):

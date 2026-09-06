@@ -268,7 +268,8 @@ class WorkPage(QWidget):
         lines = []
         for row in chunk:
             src_cn = cn_map.get(row[2], row[2])
-            lines.append(f"- [{src_cn}] {row[3]} | {row[4]}")
+            title = (row[3] or "")[:120]
+            lines.append(f"- [{src_cn}] {title} | {row[4]}")
         text = "\n".join(lines)
         messages = [
             {"role": "system", "content": "你是电力行业无线专网情报分析师。基于下面提供的情报条目（每条含来源/标题/链接），产出一份简洁专业的中文情报简报。要求：1) 只基于实际提供的情报，不臆造不扩展；2) 结构为：核心要点 → 逐条分析（引用对应条目） → 趋势研判 → 行动建议；3) 明确标注与电力无线专网、450MHz、频谱、客户进展的直接关联程度；4) 篇幅精炼，可用 Markdown 表格对比。"},
