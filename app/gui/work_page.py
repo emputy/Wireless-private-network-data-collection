@@ -31,6 +31,15 @@ def _strip_html(text: str) -> str:
     return html_mod.unescape(_TAG_RE.sub(" ", text)).strip()
 
 
+def _md_to_text(md: str) -> str:
+    """把 AI 简报里的 markdown 转为可读的纯文本（去粗体/标题标记）。"""
+    if not md:
+        return ""
+    md = re.sub(r"[*_]{1,3}", "", md)
+    md = re.sub(r"^#{1,6}\s*", "", md, flags=re.M)
+    return md.strip()
+
+
 class WorkPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -38,6 +47,7 @@ class WorkPage(QWidget):
         self.customers = load_customers(str(CUSTOMERS))
         self.entity_re = build_entity_matcher(build_entity_terms(self.customers))
         self.source_cats = {s.id: s.category for s in load_sources(str(CONFIG))}
+        self.analysis_reports = []   # 累计保存 AI 分析简报，导出时附带
         self._build_ui()
         self.refresh_buttons()
 
@@ -278,6 +288,7 @@ class WorkPage(QWidget):
         self._bubble("", f"正在分析第 {idx + 1}/{self._analyze_total} 批（{len(chunk)} 条）……")
 
         def _on_done(content):
+            self.analysis_reports.append(content)  # 保存简报供导出
             self._show_analysis(content)
             self._analyze_idx += 1
             if self._analyze_idx < self._analyze_total:
@@ -337,7 +348,16 @@ class WorkPage(QWidget):
     def _export_word(self, rows, path):
         from docx import Document
         doc = Document()
-        doc.add_heading("无线专网情报汇总", 0)
+        doc.add_heading("无线专网情报汇总（含 AI 分析简报）", 0)
+        if self.analysis_reports:
+            doc.add_heading("一、AI 分析简报", level=1)
+            for i, rep in enumerate(self.analysis_reports, 1):
+                if len(self.analysis_reports) > 1:
+                    doc.add_heading(f"简报 {i}", level=2)
+                for line in _md_to_text(rep).splitlines():
+                    if line.strip():
+                        doc.add_paragraph(line.strip())
+            doc.add_heading("二、情报明细", level=1)
         for row in rows:
             src, title, url = row[2], row[3], row[4]
             pub = row[5][:10] if row[5] else ""
@@ -359,9 +379,21 @@ class WorkPage(QWidget):
         pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
         body = ParagraphStyle("body", fontName="STSong-Light", fontSize=10, leading=16)
         h2 = ParagraphStyle("h2", fontName="STSong-Light", fontSize=12, leading=18, spaceBefore=6)
+        h1 = ParagraphStyle("h1", fontName="STSong-Light", fontSize=14, leading=20, spaceBefore=8)
+        title = ParagraphStyle("t", fontName="STSong-Light", fontSize=18, leading=24)
         doc = SimpleDocTemplate(path, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm,
                                 topMargin=16 * mm, bottomMargin=16 * mm)
-        story = [Paragraph("无线专网情报汇总", ParagraphStyle("t", fontName="STSong-Light", fontSize=18, leading=24))]
+        story = [Paragraph("无线专网情报汇总（含 AI 分析简报）", title)]
+        if self.analysis_reports:
+            story.append(Paragraph("一、AI 分析简报", h1))
+            for i, rep in enumerate(self.analysis_reports, 1):
+                if len(self.analysis_reports) > 1:
+                    story.append(Paragraph(f"简报 {i}", h2))
+                for line in _md_to_text(rep).splitlines():
+                    if line.strip():
+                        story.append(Paragraph(escape(line.strip()), body))
+                story.append(Spacer(1, 6))
+            story.append(Paragraph("二、情报明细", h1))
         for row in rows[:300]:
             src, title, url = row[2], row[3], row[4]
             pub = row[5][:10] if row[5] else ""
