@@ -241,13 +241,9 @@ class WorkPage(QWidget):
         self.btn_export = PushButton("导出内容")
         self.btn_export.setMinimumHeight(34)
         self.btn_export.clicked.connect(self.export)
-        self.btn_export_pdf = PushButton("导出 PDF")
-        self.btn_export_pdf.setMinimumHeight(34)
-        self.btn_export_pdf.clicked.connect(self.export_pdf)
         btns.addWidget(self.btn_raw)
         btns.addWidget(self.btn_analyze)
         btns.addWidget(self.btn_export)
-        btns.addWidget(self.btn_export_pdf)
         lay.addLayout(btns)
 
     def refresh_buttons(self):
@@ -472,57 +468,42 @@ class WorkPage(QWidget):
         self._bubble("分析结果", html)
 
     def export(self):
-        """导出情报为 Word / PDF，弹窗选择格式与保存位置。"""
+        """导出情报为 Word，弹窗选择保存位置。"""
         rows = self.get_visible_rows()
         if not rows:
             QMessageBox.information(self, "导出", "当前没有可导出的数据")
             return
         from datetime import datetime
         default_name = "无线专网情报汇总_" + datetime.now().strftime("%Y%m%d_%H%M%S")
-        path, selected = QFileDialog.getSaveFileName(
-            self, "选择导出格式与保存位置", default_name,
-            "Word 文档 (*.docx);;PDF 文档 (*.pdf)")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "选择保存位置", default_name, "Word 文档 (*.docx)")
         if not path:
             return
         path = path.strip()
-        # 根据选择器/扩展名补全
-        if not path.lower().endswith((".docx", ".pdf")):
-            if "PDF" in selected:
-                path += ".pdf"
-            else:
-                path += ".docx"
+        if not path.lower().endswith(".docx"):
+            path += ".docx"
         try:
-            if path.lower().endswith(".pdf"):
-                self._export_pdf(rows, path)
-            else:
-                self._export_word(rows, path)
+            self._export_word(rows, path)
             self._bubble("导出完成", f"已导出：{path}")
         except Exception as e:
             self._bubble("导出失败", html_mod.escape(str(e)))
 
-    def export_pdf(self):
-        """一键导出 PDF（含 AI 分析简报），弹窗选择保存位置。"""
-        rows = self.get_visible_rows()
-        if not rows:
-            QMessageBox.information(self, "导出 PDF", "当前没有可导出的数据")
-            return
-        from datetime import datetime
-        default_name = "无线专网情报汇总_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".pdf"
-        path, _ = QFileDialog.getSaveFileName(
-            self, "导出 PDF", default_name, "PDF 文档 (*.pdf)")
-        if not path:
-            return
-        if not path.lower().endswith(".pdf"):
-            path += ".pdf"
-        try:
-            self._export_pdf(rows, path)
-            self._bubble("导出 PDF 完成", f"已导出：{path}")
-        except Exception as e:
-            self._bubble("导出 PDF 失败", html_mod.escape(str(e)))
-
     def _export_word(self, rows, path):
         from docx import Document
+        from docx.oxml.ns import qn
         doc = Document()
+        # 统一正文/标题为微软雅黑
+        for sname in ["Normal", "Title", "Heading 1", "Heading 2", "Heading 3", "Heading 4"]:
+            try:
+                st = doc.styles[sname]
+                st.font.name = "微软雅黑"
+                rpr = st.element.get_or_add_rPr()
+                rfonts = rpr.find(qn("w:rFonts"))
+                if rfonts is None:
+                    rfonts = rpr.makeelement(qn("w:rFonts"), {}); rpr.append(rfonts)
+                rfonts.set(qn("w:eastAsia"), "微软雅黑")
+            except Exception:
+                pass
         doc.add_heading("无线专网情报汇总（含 AI 分析简报）", 0)
         if self.analysis_reports:
             doc.add_heading("一、AI 分析简报", level=1)
