@@ -40,6 +40,136 @@ def _md_to_text(md: str) -> str:
     return md.strip()
 
 
+def _add_inline(p, text: str):
+    """把含 **粗体** 标记的文本加入到段落（生成粗体 run）。"""
+    parts = re.split(r"(\*\*.+?\*\*)", text)
+    for part in parts:
+        if not part:
+            continue
+        if part.startswith("**") and part.endswith("**"):
+            r = p.add_run(part[2:-2]); r.bold = True
+        else:
+            p.add_run(part)
+
+
+def _md_to_docx(doc, md: str):
+    """把 Markdown 渲染进 Word：标题、表格（转真表格）、列表、粗体、段落。"""
+    lines = md.splitlines() if md else []
+    i = 0
+    while i < len(lines):
+        line = lines[i].rstrip()
+        s = line.strip()
+        if not s:
+            i += 1; continue
+        # 表格块
+        if s.startswith("|"):
+            tbl = []
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                tbl.append(lines[i].strip().strip("|")); i += 1
+            if len(tbl) >= 2 and re.match(r"^[\s:|-]+$", tbl[1]):   # 去掉 |---|---| 分隔行
+                tbl = [tbl[0]] + tbl[2:]
+            if tbl:
+                t = doc.add_table(rows=len(tbl), cols=max(len(r.split("|")) for r in tbl))
+                t.style = "Light Grid Accent 1"
+                for ri, r in enumerate(tbl):
+                    cells = [c.strip() for c in r.split("|")]
+                    for ci in range(len(t.rows[ri].cells)):
+                        cell = t.rows[ri].cells[ci]
+                        cell.text = cells[ci] if ci < len(cells) else ""
+                        for p in cell.paragraphs:
+                            _add_inline(p, cell.text)
+            continue
+        # 标题
+        m = re.match(r"^(#{1,6})\s*(.*)$", s)
+        if m:
+            lvl = min(len(m.group(1)), 4)
+            doc.add_heading(html_mod.unescape(m.group(2)), level=lvl)
+            i += 1; continue
+        # 分隔线 / 星号强调行
+        if re.match(r"^\s*([-*_])\1{2,}\s*$", s) or re.match(r"^>+\s*", s):
+            i += 1; continue
+        # 列表
+        if re.match(r"^[-*]\s+", s) or re.match(r"^\d+[.、]\s*", s):
+            body = re.sub(r"^(?:[-*]|\d+[.、])\s*", "", s)
+            p = doc.add_paragraph(style="List Bullet" if re.match(r"^[-*]\s+", s) else None)
+            _add_inline(p, body)
+            i += 1; continue
+        # 普通段
+        p = doc.add_paragraph()
+        _add_inline(p, s)
+        i += 1
+
+
+def _md_inline(text: str) -> str:
+    """Markdown 行内加粗 -> reportlab <b>标签。"""
+    out = []
+    for part in re.split(r"(\*\*.+?\*\*)", text):
+        if not part:
+            continue
+        if part.startswith("**") and part.endswith("**"):
+            out.append("<b>" + html_mod.escape(part[2:-2]) + "</b>")
+        else:
+            out.append(html_mod.escape(part))
+    return "".join(out)
+
+
+def _md_to_pdf(md: str):
+    """把 Markdown 渲染成 reportlab 流（标题/表格/列表/段落）。"""
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib import colors
+    from xml.sax.saxutils import escape
+    pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+    body = ParagraphStyle("b", fontName="STSong-Light", fontSize=9.5, leading=14)
+    h1 = ParagraphStyle("h1", fontName="STSong-Light", fontSize=13, leading=18, spaceBefore=6)
+    h2 = ParagraphStyle("h2", fontName="STSong-Light", fontSize=11, leading=16, spaceBefore=4)
+    out = []
+    lines = (md or "").splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if not line:
+            i += 1; continue
+        if line.startswith("|"):
+            tbl = []
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                tbl.append(lines[i].strip().strip("|")); i += 1
+            if len(tbl) >= 2 and re.match(r"^[\s:|-]+$", tbl[1]):
+                tbl = [tbl[0]] + tbl[2:]
+            if tbl:
+                cols = max(len(r.split("|")) for r in tbl)
+                data = []
+                for r in tbl:
+                    cells = [c.strip() for c in r.split("|")]
+                    cells += [""] * (cols - len(cells))
+                    data.append([_md_inline(c) for c in cells])
+                t = Table(data)
+                t.setStyle(TableStyle([
+                    ("FONTNAME", (0, 0), (-1, -1), "STSong-Light"),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2C5F8A")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#b8c4d0")),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#eef3f8")]),
+                ]))
+                out.append(t)
+            continue
+        m = re.match(r"^(#{1,3})\s*(.*)$", line)
+        if m:
+            out.append(Paragraph(_md_inline(m.group(2)), h1 if len(m.group(1)) <= 1 else h2))
+            i += 1; continue
+        if re.match(r"^[-*]\s+", line) or re.match(r"^\d+[.、]\s*", line):
+            b = re.sub(r"^(?:[-*]|\d+[.、])\s*", "", line)
+            out.append(Paragraph("• " + _md_inline(b), body)); i += 1; continue
+        if re.match(r"^([-*_])\1{2,}$", line):
+            i += 1; continue
+        out.append(Paragraph(_md_inline(line), body))
+        i += 1
+    return out
+
+
 class WorkPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -354,9 +484,7 @@ class WorkPage(QWidget):
             for i, rep in enumerate(self.analysis_reports, 1):
                 if len(self.analysis_reports) > 1:
                     doc.add_heading(f"简报 {i}", level=2)
-                for line in _md_to_text(rep).splitlines():
-                    if line.strip():
-                        doc.add_paragraph(line.strip())
+                _md_to_docx(doc, rep)
             doc.add_heading("二、情报明细", level=1)
         for row in rows:
             src, title, url = row[2], row[3], row[4]
@@ -389,9 +517,7 @@ class WorkPage(QWidget):
             for i, rep in enumerate(self.analysis_reports, 1):
                 if len(self.analysis_reports) > 1:
                     story.append(Paragraph(f"简报 {i}", h2))
-                for line in _md_to_text(rep).splitlines():
-                    if line.strip():
-                        story.append(Paragraph(escape(line.strip()), body))
+                story.extend(_md_to_pdf(rep))
                 story.append(Spacer(1, 6))
             story.append(Paragraph("二、情报明细", h1))
         for row in rows[:300]:
