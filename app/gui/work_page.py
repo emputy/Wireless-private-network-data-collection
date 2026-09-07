@@ -69,15 +69,15 @@ def _md_to_docx(doc, md: str):
             if len(tbl) >= 2 and re.match(r"^[\s:|-]+$", tbl[1]):   # 去掉 |---|---| 分隔行
                 tbl = [tbl[0]] + tbl[2:]
             if tbl:
-                t = doc.add_table(rows=len(tbl), cols=max(len(r.split("|")) for r in tbl))
+                cols = max(len(r.split("|")) for r in tbl)
+                t = doc.add_table(rows=len(tbl), cols=cols)
                 t.style = "Light Grid Accent 1"
                 for ri, r in enumerate(tbl):
                     cells = [c.strip() for c in r.split("|")]
-                    for ci in range(len(t.rows[ri].cells)):
+                    for ci in range(cols):
                         cell = t.rows[ri].cells[ci]
-                        cell.text = cells[ci] if ci < len(cells) else ""
-                        for p in cell.paragraphs:
-                            _add_inline(p, cell.text)
+                        p = cell.paragraphs[0]
+                        _add_inline(p, cells[ci] if ci < len(cells) else "")
             continue
         # 标题
         m = re.match(r"^(#{1,6})\s*(.*)$", s)
