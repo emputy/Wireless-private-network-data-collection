@@ -241,9 +241,13 @@ class WorkPage(QWidget):
         self.btn_export = PushButton("导出内容")
         self.btn_export.setMinimumHeight(34)
         self.btn_export.clicked.connect(self.export)
+        self.btn_export_pdf = PushButton("导出 PDF")
+        self.btn_export_pdf.setMinimumHeight(34)
+        self.btn_export_pdf.clicked.connect(self.export_pdf)
         btns.addWidget(self.btn_raw)
         btns.addWidget(self.btn_analyze)
         btns.addWidget(self.btn_export)
+        btns.addWidget(self.btn_export_pdf)
         lay.addLayout(btns)
 
     def refresh_buttons(self):
@@ -495,6 +499,26 @@ class WorkPage(QWidget):
             self._bubble("导出完成", f"已导出：{path}")
         except Exception as e:
             self._bubble("导出失败", html_mod.escape(str(e)))
+
+    def export_pdf(self):
+        """一键导出 PDF（含 AI 分析简报），弹窗选择保存位置。"""
+        rows = self.get_visible_rows()
+        if not rows:
+            QMessageBox.information(self, "导出 PDF", "当前没有可导出的数据")
+            return
+        from datetime import datetime
+        default_name = "无线专网情报汇总_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".pdf"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出 PDF", default_name, "PDF 文档 (*.pdf)")
+        if not path:
+            return
+        if not path.lower().endswith(".pdf"):
+            path += ".pdf"
+        try:
+            self._export_pdf(rows, path)
+            self._bubble("导出 PDF 完成", f"已导出：{path}")
+        except Exception as e:
+            self._bubble("导出 PDF 失败", html_mod.escape(str(e)))
 
     def _export_word(self, rows, path):
         from docx import Document
